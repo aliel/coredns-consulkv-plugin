@@ -3,11 +3,9 @@
 This plugin enables CoreDNS to use Consul's Key-Value store as a backend for DNS records. \
 It supports both forward and reverse DNS lookups, as well as wildcard entries.
 
-> [!IMPORTANT]
-> This plugin is still actively being worked on. \
-> Expect possible changes or reworks of how this plugin functions and how the config is structured.
->
-> Additionally, this README isn't always up-to-date, so not everything mentioned here might work as described.
+> [!NOTE]
+> This plugin is actively maintained. The configuration format may still change
+> between releases; breaking changes will be called out in the release notes.
 
 ## Features
 
@@ -29,32 +27,28 @@ sequenceDiagram
     participant ConsulKV
     participant Consul
     participant NextPlugin
-    participant LockdownChecker
 
     User->>CoreDNS: DNS Query
     CoreDNS->>ConsulKV: Handle Query
-    alt Consul is reachable
+    alt Query name is not in a configured zone
+        ConsulKV->>NextPlugin: Pass Query
+        NextPlugin-->>CoreDNS: DNS Response
+        CoreDNS-->>User: DNS Response
+    else Query name is in a configured zone
         ConsulKV->>Consul: Fetch DNS Record
-        Consul-->>ConsulKV: Return Record
-        alt Record found
+        alt Consul request fails
+            Consul-->>ConsulKV: Error
+            ConsulKV-->>CoreDNS: SERVFAIL
+            CoreDNS-->>User: SERVFAIL
+        else Record found
+            Consul-->>ConsulKV: Return Record
             ConsulKV-->>CoreDNS: DNS Response
             CoreDNS-->>User: DNS Response
         else Record not found
-            ConsulKV->>NextPlugin: Pass Query
-            NextPlugin-->>CoreDNS: DNS Response
+            Consul-->>ConsulKV: No Data
+            Note over ConsulKV: Answer NODATA/NXDOMAIN with the zone SOA
+            ConsulKV-->>CoreDNS: DNS Response
             CoreDNS-->>User: DNS Response
-        end
-    else Consul is unreachable (Lockdown mode)
-        ConsulKV->>NextPlugin: Bypass Query
-        NextPlugin-->>CoreDNS: DNS Response
-        CoreDNS-->>User: DNS Response
-        Note over ConsulKV,LockdownChecker: Start Lockdown Checker if not running
-        loop Every X seconds
-            LockdownChecker->>Consul: Check Connection
-            alt Consul is back online
-                Consul-->>LockdownChecker: Connection Successful
-                LockdownChecker->>ConsulKV: Exit Lockdown Mode
-            end
         end
     end
 ```
@@ -143,7 +137,7 @@ The configuration must be a JSON object with the following structure:
   - `full`: Flatten all CNAMEs, including external ones (uses `plugin.NextOrFailure` for external resolution)
 - `consul_cache`: Defines the internal cache used by the Consul client
   - `use_cache`: Requests that the Consul agent cache results locally
-  - `max_age`: Limits how old a cached value will be returned if `use_cache` is true
+  - `max_age`: Limits how old (in seconds) a cached value may be when `use_cache` is true
   - `consistent`: Forces the read to be fully consistent; More expensive but prevents ever performing a stale read
   - `allowstale`: Allows any Consul server (non-leader) to service a read; Allows for lower latency and higher throughput
 
@@ -204,11 +198,11 @@ The value for each key must be a JSON object with the following structure:
            "retry": 3600,
            "expire": 1209600,
            "minimum": 3600
-         },
-         {
-           "type": "NS",
-           "value": ["ns.example.com"]
          }
+       },
+       {
+         "type": "NS",
+         "value": ["ns.example.com"]
        }
      ]
    }
@@ -246,7 +240,7 @@ The value for each key must be a JSON object with the following structure:
    }
    ```
 
-4. Wildcard record for `*.example.com` with additional TXT:
+4. Wildcard record for `*.example.com` holding an A and a TXT record:
 
    Key: `dns/zones/example.com/*`
    Value:
@@ -260,11 +254,15 @@ The value for each key must be a JSON object with the following structure:
        },
        {
           "type": "TXT",
-          "value": ["Additional information displayed as TXT"]
+          "value": ["Some information exposed as a TXT record"]
        }
      ]
    }
    ```
+
+   An `A` query for `*.example.com` returns the A record, and a `TXT` query
+   returns the TXT record. Each record type is only returned for a matching
+   query type.
 
 5. SRV record for a service:
 
@@ -277,18 +275,19 @@ The value for each key must be a JSON object with the following structure:
        {
          "type": "SRV",
          "value": [
-         {
-           "target": "sip.example.com",
-           "port": 5060,
-           "priority": 10,
-           "weight": 100
-         }
-        ]
+           {
+             "target": "sip.example.com",
+             "port": 5060,
+             "priority": 10,
+             "weight": 100
+           }
+         ]
        }
      ]
    }
+   ```
 
-6. CNAME record for test.example.com:
+6. CNAME record for www.example.com:
 
    Key: `dns/zones/example.com/www`
    Value:
@@ -304,7 +303,7 @@ The value for each key must be a JSON object with the following structure:
    }
    ```
 
-6. HTTPS for service.example.com with additional A records:
+7. HTTPS for service.example.com with additional A records:
 
    Key: `dns/zones/example.com/service`
    Value:
@@ -380,7 +379,27 @@ This plugin exposes the following metrics for Prometheus:
     The list of possible errors are: 
     * `ERROR`: Occures when ConsulKV wasn't able to complete the request due to internal errors
     * `NODATA`: Occures when ConsulKV was unable to find a record matching the request
-    * `NXDOMAIn`: Occures when ConsulKV was unable to find a record and was unable to return any form of data, like `SOA`
+    * `NXDOMAIN`: Occures when ConsulKV was unable to find a record and was unable to return any form of data, like `SOA`
+
+## Development
+
+A Nix shell provides the Go toolchain used to build and test the plugin:
+
+```sh
+nix-shell        # or: nix develop
+```
+
+Inside the shell (or with a local Go install), run the checks:
+
+```sh
+go build ./...
+go vet ./...
+go test -race ./...
+```
+
+The Consul-backed integration test (`TestConsulKV`) is skipped automatically
+when no Consul server is reachable, so the suite runs without one. CI runs the
+same build, vet, and test steps on every pull request.
 
 ## License
 
