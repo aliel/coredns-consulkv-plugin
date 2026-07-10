@@ -2,148 +2,155 @@ package consulkv
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/miekg/dns"
 	"github.com/mwantia/coredns-consulkv-plugin/logging"
 	"github.com/mwantia/coredns-consulkv-plugin/records"
 )
 
+// appendRequest carries everything an appender needs to add records of a single
+// type to the response being built.
+type appendRequest struct {
+	msg   *dns.Msg
+	qname string
+	qtype uint16
+	ttl   int
+	value json.RawMessage
+	soa   *records.SOARecord
+	found bool
+}
+
+// recordAppenders maps a stored record type to the logic that appends it. Each
+// appender first checks whether it applies to the query type and returns
+// (false, nil) when it does not, so HandleRecord stays a simple dispatch loop.
+//
+// CNAME is handled separately in HandleRecord: it recurses back into
+// HandleRecord for flattening, which would create a static initialization cycle
+// if referenced from this package-level map.
+var recordAppenders = map[string]func(*appendRequest) (bool, error){
+	"NS": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeNS {
+			return records.AppendNSRecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return false, nil
+	},
+	"SVCB": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeSVCB {
+			return records.AppendSVCBRecords(r.msg, r.qname, r.ttl, r.value, dns.TypeSVCB)
+		}
+		return false, nil
+	},
+	"HTTPS": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeHTTPS {
+			return records.AppendSVCBRecords(r.msg, r.qname, r.ttl, r.value, dns.TypeHTTPS)
+		}
+		return false, nil
+	},
+	"SOA": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeSOA || r.qtype == dns.TypeANY {
+			return records.AppendSOARecord(r.msg, r.qname, r.soa), nil
+		}
+		return false, nil
+	},
+	"A": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeA || (r.qtype == dns.TypeHTTPS && !r.found) {
+			return records.AppendARecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return false, nil
+	},
+	"AAAA": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeAAAA || (r.qtype == dns.TypeHTTPS && !r.found) {
+			return records.AppendAAAARecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return false, nil
+	},
+	"PTR": func(r *appendRequest) (bool, error) {
+		if r.qtype != dns.TypePTR {
+			return false, nil
+		}
+		if records.IsDnsSdQuery(r.qname) {
+			return records.AppendDnsSdPTRRecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return records.AppendPTRRecords(r.msg, r.qname, r.ttl, r.value)
+	},
+	"SRV": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeSRV {
+			return records.AppendSRVRecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return false, nil
+	},
+	"TXT": func(r *appendRequest) (bool, error) {
+		if r.qtype == dns.TypeTXT {
+			return records.AppendTXTRecords(r.msg, r.qname, r.ttl, r.value)
+		}
+		return false, nil
+	},
+}
+
 func (plug *ConsulKVPlugin) HandleRecord(ctx context.Context, msg *dns.Msg, qname string, qtype uint16, record *records.Record) bool {
 	ttl := GetDefaultTTL(record)
-	foundRequestedType := false
 
 	logging.Log.Debugf("Amount of available records: %v", len(record.Records))
 
 	config := plug.GetConfig()
 	zname, _ := GetZoneAndRecord(config.Zones, qname)
 	soa, err := plug.Consul.GetSOARecordFromConsul(zname, config.ConsulCache)
-
 	if err != nil {
 		logging.Log.Errorf("Error loading SOA record: %v", err)
 		IncrementMetricsPluginErrorsTotal("SOA_GET")
 	}
 
+	found := false
 	for _, rec := range record.Records {
 		logging.Log.Debugf("Searching record for type %s", rec.Type)
 
-		switch rec.Type {
-		case "CNAME":
-			if qtype == dns.TypeCNAME || qtype == dns.TypeA || qtype == dns.TypeAAAA || qtype == dns.TypeTXT || (qtype == dns.TypeHTTPS && !foundRequestedType) {
-				foundRequestedType = plug.AppendCNAMERecords(ctx, msg, qname, qtype, ttl, rec.Value)
+		if rec.Type == "CNAME" {
+			if cnameAppliesTo(qtype, found) &&
+				plug.AppendCNAMERecords(ctx, msg, qname, qtype, ttl, rec.Value) {
+				found = true
 			}
+			continue
+		}
 
-		case "NS":
-			if qtype == dns.TypeNS {
-				found, err := records.AppendNSRecords(msg, qname, ttl, rec.Value)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for NS record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
+		appender, ok := recordAppenders[rec.Type]
+		if !ok {
+			continue
+		}
 
-				foundRequestedType = found
-			}
-
-		case "SVCB":
-			if qtype == dns.TypeSVCB {
-				found, err := records.AppendSVCBRecords(msg, qname, ttl, rec.Value, dns.TypeSVCB)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for SVCB record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
-
-				foundRequestedType = found
-			}
-
-		case "HTTPS":
-			if qtype == dns.TypeHTTPS {
-				found, err := records.AppendSVCBRecords(msg, qname, ttl, rec.Value, dns.TypeHTTPS)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for HTTPS record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
-
-				foundRequestedType = found
-			}
-
-		case "SOA":
-			if qtype == dns.TypeSOA || qtype == dns.TypeANY {
-				foundRequestedType = records.AppendSOARecord(msg, qname, soa)
-			}
-
-		case "A":
-			if qtype == dns.TypeA || (qtype == dns.TypeHTTPS && !foundRequestedType) {
-				found, err := records.AppendARecords(msg, qname, ttl, rec.Value)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for A record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
-
-				foundRequestedType = found
-			}
-
-		case "AAAA":
-			if qtype == dns.TypeAAAA || (qtype == dns.TypeHTTPS && !foundRequestedType) {
-				found, err := records.AppendAAAARecords(msg, qname, ttl, rec.Value)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for AAAA record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
-
-				foundRequestedType = found
-			}
-
-		case "PTR":
-			if qtype == dns.TypePTR {
-				if records.IsDnsSdQuery(qname) {
-					found, err := records.AppendDnsSdPTRRecords(msg, qname, ttl, rec.Value)
-					if err != nil {
-						logging.Log.Errorf("Error parsing JSON for DNS-SD record: %v", err)
-						IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-					}
-
-					foundRequestedType = found
-				} else {
-					found, err := records.AppendPTRRecords(msg, qname, ttl, rec.Value)
-					if err != nil {
-						logging.Log.Errorf("Error parsing JSON for PTR record: %v", err)
-						IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-					}
-
-					foundRequestedType = found
-				}
-			}
-
-		case "SRV":
-			if qtype == dns.TypeSRV {
-				found, err := records.AppendSRVRecords(msg, qname, ttl, rec.Value)
-				if err != nil {
-					logging.Log.Errorf("Error parsing JSON for SRV record: %v", err)
-					IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-				}
-
-				foundRequestedType = found
-			}
-
-		case "TXT":
-			txtAnswered, err := records.AppendTXTRecords(msg, qtype, qname, ttl, rec.Value)
-			if err != nil {
-				logging.Log.Errorf("Error parsing JSON for TXT record: %v", err)
-				IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
-			}
-
-			if txtAnswered {
-				foundRequestedType = txtAnswered
-			}
+		req := &appendRequest{msg, qname, qtype, ttl, rec.Value, soa, found}
+		matched, err := appender(req)
+		if err != nil {
+			logging.Log.Errorf("Error parsing JSON for %s record: %v", rec.Type, err)
+			IncrementMetricsPluginErrorsTotal("JSON_UNMARSHAL")
+			continue
+		}
+		if matched {
+			found = true
 		}
 	}
 
-	if (qtype == dns.TypeSVCB || qtype == dns.TypeHTTPS) && !foundRequestedType && len(msg.Answer) > 0 {
-		foundRequestedType = true
+	return plug.finalizeAnswer(msg, qname, qtype, soa, found)
+}
+
+// cnameAppliesTo reports whether a CNAME record should be processed for the
+// given query type. A/AAAA/TXT queries flatten through the CNAME, and HTTPS
+// queries follow it only when no direct match has been found yet.
+func cnameAppliesTo(qtype uint16, found bool) bool {
+	return qtype == dns.TypeCNAME || qtype == dns.TypeA || qtype == dns.TypeAAAA ||
+		qtype == dns.TypeTXT || (qtype == dns.TypeHTTPS && !found)
+}
+
+// finalizeAnswer applies the cross-record fallbacks: treat any answer as a match
+// for service-binding queries, and add an authority SOA when nothing matched.
+func (plug *ConsulKVPlugin) finalizeAnswer(msg *dns.Msg, qname string, qtype uint16, soa *records.SOARecord, found bool) bool {
+	if (qtype == dns.TypeSVCB || qtype == dns.TypeHTTPS) && !found && len(msg.Answer) > 0 {
+		found = true
 	}
 
-	if !foundRequestedType && soa != nil && qtype != dns.TypeSOA && qtype != dns.TypeANY {
+	if !found && soa != nil && qtype != dns.TypeSOA && qtype != dns.TypeANY {
 		records.AppendSOAToAuthority(msg, qname, soa)
 	}
 
-	return foundRequestedType
+	return found
 }
