@@ -86,11 +86,3 @@ func GetDefaultSOA(zoneName string) *records.SOARecord {
 		MINIMUM: 3600,
 	}
 }
-
-func GetDefaultTTL(record *records.Record) int {
-	if record.TTL != nil {
-		return *record.TTL
-	}
-
-	return 3600 // Default TTL
-}

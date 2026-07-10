@@ -89,7 +89,7 @@ var recordAppenders = map[string]func(*appendRequest) (bool, error){
 }
 
 func (plug *ConsulKVPlugin) HandleRecord(ctx context.Context, msg *dns.Msg, qname string, qtype uint16, record *records.Record) bool {
-	ttl := GetDefaultTTL(record)
+	ttl := records.GetRecordTTL(record)
 
 	logging.Log.Debugf("Amount of available records: %v", len(record.Records))
 
