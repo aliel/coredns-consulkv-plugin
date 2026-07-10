@@ -47,7 +47,7 @@ func TestConsulKV(tst *testing.T) {
 	}
 
 	plug.Consul = consul
-	plug.Config = config
+	plug.SetConfig(config)
 
 	tests := GenerateTestCases()
 	RunTests(tst, plug, tests)

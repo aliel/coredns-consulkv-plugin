@@ -46,28 +46,28 @@ func (consul ConsulConfig) WatchConsulKey(key string, fn handler) error {
 	return nil
 }
 
-func (consul ConsulConfig) WatchConsulConfig(config *ConsulKVConfig) error {
-	i := 0
-	err := consul.WatchConsulKey("config", func(kv *api.KVPair) error {
-		if i > 0 {
-			if err := json.Unmarshal(kv.Value, &config); err != nil {
-				logging.Log.Errorf("%s", err)
-
-				IncrementMetricsConsulConfigUpdatedTotal("ERROR")
-				return err
-			}
-
-			logging.Log.Infof("Updated Consul Config from '%s/config'", consul.KVPrefix)
-			IncrementMetricsConsulConfigUpdatedTotal("NOERROR")
+func (consul ConsulConfig) WatchConsulConfig(onUpdate func(*ConsulKVConfig)) error {
+	first := true
+	return consul.WatchConsulKey("config", func(kv *api.KVPair) error {
+		// The watch fires immediately with the value already loaded at startup;
+		// skip that first delivery and only act on subsequent updates.
+		if first {
+			first = false
+			return nil
 		}
-		i++
+
+		config := &ConsulKVConfig{}
+		if err := json.Unmarshal(kv.Value, config); err != nil {
+			logging.Log.Errorf("Unable to parse updated Consul config: %v", err)
+
+			IncrementMetricsConsulConfigUpdatedTotal("ERROR")
+			return err
+		}
+
+		onUpdate(config)
+
+		logging.Log.Infof("Updated Consul Config from '%s/config'", consul.KVPrefix)
+		IncrementMetricsConsulConfigUpdatedTotal("NOERROR")
 		return nil
 	})
-
-	if err != nil {
-
-		return err
-	}
-
-	return nil
 }
