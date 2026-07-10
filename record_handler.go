@@ -14,8 +14,9 @@ func (plug *ConsulKVPlugin) HandleRecord(ctx context.Context, msg *dns.Msg, qnam
 
 	logging.Log.Debugf("Amount of available records: %v", len(record.Records))
 
-	zname, _ := GetZoneAndRecord(plug.Config.Zones, qname)
-	soa, err := plug.Consul.GetSOARecordFromConsul(zname, plug.Config.ConsulCache)
+	config := plug.GetConfig()
+	zname, _ := GetZoneAndRecord(config.Zones, qname)
+	soa, err := plug.Consul.GetSOARecordFromConsul(zname, config.ConsulCache)
 
 	if err != nil {
 		logging.Log.Errorf("Error loading SOA record: %v", err)

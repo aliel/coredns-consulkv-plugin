@@ -217,7 +217,7 @@ func CreateQueryOptions(cache *ConsulKVCache) *api.QueryOptions {
 			options.UseCache = *cache.UseCache
 		}
 		if cache.MaxAge != nil {
-			options.MaxAge = time.Duration(*cache.MaxAge)
+			options.MaxAge = time.Duration(*cache.MaxAge) * time.Second
 		}
 		if cache.Consistent != nil {
 			options.RequireConsistent = *cache.Consistent

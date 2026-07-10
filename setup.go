@@ -7,7 +7,6 @@ import (
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
 	"github.com/mwantia/coredns-consulkv-plugin/logging"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var soaSerial = uint32(time.Now().Unix())
@@ -18,12 +17,7 @@ func init() {
 
 func setup(c *caddy.Controller) error {
 	c.OnStartup(func() error {
-		prometheus.MustRegister(metricsPluginErrorsTotal)
-		prometheus.MustRegister(metricsConsulConfigUpdatedTotal)
-		prometheus.MustRegister(metricsConsulRequestDurationSeconds)
-		prometheus.MustRegister(metricsQueryRequestsTotal)
-		prometheus.MustRegister(metricsQueryResponsesSuccessfulTotal)
-		prometheus.MustRegister(metricsQueryResponsesFailedTotal)
+		registerMetrics()
 		return nil
 	})
 
@@ -33,7 +27,7 @@ func setup(c *caddy.Controller) error {
 	}
 
 	if !conf.Consul.DisableWatch {
-		err = conf.Consul.WatchConsulConfig(conf.Config)
+		err = conf.Consul.WatchConsulConfig(conf.SetConfig)
 		if err != nil {
 			logging.Log.Warningf("Unable to create Consul watcher for '%s/config'", conf.Consul.KVPrefix)
 		}

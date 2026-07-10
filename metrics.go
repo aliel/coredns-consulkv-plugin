@@ -81,4 +81,18 @@ func IncrementMetricsResponsesFailedTotal(zone string, qtype uint16, err string)
 	metricsQueryResponsesFailedTotal.WithLabelValues(dns.Fqdn(zone), t, err).Inc()
 }
 
-var _ sync.Once
+var metricsOnce sync.Once
+
+// registerMetrics registers all plugin collectors exactly once. CoreDNS runs
+// setup again on every reload (SIGUSR1); without the guard a second
+// prometheus.MustRegister would panic with a duplicate-registration error.
+func registerMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(metricsPluginErrorsTotal)
+		prometheus.MustRegister(metricsConsulConfigUpdatedTotal)
+		prometheus.MustRegister(metricsConsulRequestDurationSeconds)
+		prometheus.MustRegister(metricsQueryRequestsTotal)
+		prometheus.MustRegister(metricsQueryResponsesSuccessfulTotal)
+		prometheus.MustRegister(metricsQueryResponsesFailedTotal)
+	})
+}

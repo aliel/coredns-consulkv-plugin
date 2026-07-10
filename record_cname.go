@@ -26,26 +26,28 @@ func (plug *ConsulKVPlugin) AppendCNAMERecords(ctx context.Context, msg *dns.Msg
 	}
 	msg.Answer = append(msg.Answer, rr)
 
-	if plug.Config.Flattening == types.Flattening_None {
+	config := plug.GetConfig()
+
+	if config.Flattening == types.Flattening_None {
 		logging.Log.Debugf("CNAME flattening disabled; Only returning CNAME record for '%s'", alias)
 
 		return true
 	}
 
-	zname, rname := GetZoneAndRecord(plug.Config.Zones, alias)
+	zname, rname := GetZoneAndRecord(config.Zones, alias)
 	if zname == "" {
-		if plug.Config.Flattening == types.Flattening_Full {
-			logging.Log.Debugf("Zone %s not in configured zones %s, passing to next plugin ", zname, plug.Config.Zones)
+		if config.Flattening == types.Flattening_Full {
+			logging.Log.Debugf("Zone %s not in configured zones %s, passing to next plugin ", zname, config.Zones)
 			return plug.HandleExternalCNAME(ctx, msg, alias, qtype)
 		}
 
-		logging.Log.Debugf("Zone %s not in configured zones %s, skipping CNAME flattening", zname, plug.Config.Zones)
+		logging.Log.Debugf("Zone %s not in configured zones %s, skipping CNAME flattening", zname, config.Zones)
 		return true
 	}
 
 	logging.Log.Debugf("Received new request for zone '%s' and record '%s' with code '%s", zname, rname, dns.TypeToString[qtype])
 
-	record, err := plug.Consul.GetZoneRecordFromConsul(zname, rname, plug.Config.ConsulCache)
+	record, err := plug.Consul.GetZoneRecordFromConsul(zname, rname, config.ConsulCache)
 	if err != nil {
 		logging.Log.Errorf("Error receiving value for zone '%s' and name '%s': %v", zname, rname, err)
 		IncrementMetricsPluginErrorsTotal("CONSUL_GET")
