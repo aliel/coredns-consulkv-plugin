@@ -38,12 +38,15 @@ func TestConsulKV(tst *testing.T) {
 
 	consul, err := CreateConsulConfig(c)
 	if err != nil {
-		tst.Errorf("Unable to create consul client: %v", err)
+		tst.Skipf("Consul is not configured, skipping integration test: %v", err)
 	}
 
 	config, err := consul.GetConfigFromConsul()
 	if err != nil {
-		tst.Errorf("Unable to get config from consul: %v", err)
+		tst.Skipf("Consul is not reachable, skipping integration test: %v", err)
+	}
+	if config == nil {
+		tst.Skip("No configuration found in Consul, skipping integration test")
 	}
 
 	plug.Consul = consul
@@ -53,23 +56,9 @@ func TestConsulKV(tst *testing.T) {
 	RunTests(tst, plug, tests)
 }
 
-func OverwriteStdOut() error {
-	tempFile, err := os.CreateTemp("", "coredns-consulkv-test-log")
-	if err != nil {
-		return err
-	}
-
-	defer os.Remove(tempFile.Name())
-
-	orig := logging.Log
+func OverwriteStdOut() {
 	logging.Log = clog.NewWithPlugin("consulkv")
 	log.SetOutput(os.Stdout)
-
-	defer func() {
-		logging.Log = orig
-	}()
-
-	return nil
 }
 
 func GenerateTestCases() []TestCase {

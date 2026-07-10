@@ -27,9 +27,14 @@ func setup(c *caddy.Controller) error {
 	}
 
 	if !conf.Consul.DisableWatch {
-		err = conf.Consul.WatchConsulConfig(conf.SetConfig)
+		plan, err := conf.Consul.WatchConsulConfig(conf.SetConfig)
 		if err != nil {
 			logging.Log.Warningf("Unable to create Consul watcher for '%s/config'", conf.Consul.KVPrefix)
+		} else {
+			c.OnShutdown(func() error {
+				plan.Stop()
+				return nil
+			})
 		}
 	}
 

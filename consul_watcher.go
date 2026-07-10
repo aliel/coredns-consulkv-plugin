@@ -10,7 +10,7 @@ import (
 
 type handler func(*api.KVPair) error
 
-func (consul ConsulConfig) WatchConsulKey(key string, fn handler) error {
+func (consul ConsulConfig) WatchConsulKey(key string, fn handler) (*watch.Plan, error) {
 	params := map[string]interface{}{
 		"type":  "key",
 		"key":   consul.KVPrefix + "/" + key,
@@ -19,7 +19,7 @@ func (consul ConsulConfig) WatchConsulKey(key string, fn handler) error {
 
 	watcher, err := watch.Parse(params)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	watcher.Handler = func(idx uint64, raw interface{}) {
@@ -43,10 +43,10 @@ func (consul ConsulConfig) WatchConsulKey(key string, fn handler) error {
 
 	logging.Log.Infof("Started watching Consul key '%s/%s'", consul.KVPrefix, key)
 
-	return nil
+	return watcher, nil
 }
 
-func (consul ConsulConfig) WatchConsulConfig(onUpdate func(*ConsulKVConfig)) error {
+func (consul ConsulConfig) WatchConsulConfig(onUpdate func(*ConsulKVConfig)) (*watch.Plan, error) {
 	first := true
 	return consul.WatchConsulKey("config", func(kv *api.KVPair) error {
 		// The watch fires immediately with the value already loaded at startup;
