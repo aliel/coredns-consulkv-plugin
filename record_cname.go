@@ -56,7 +56,7 @@ func (plug *ConsulKVPlugin) AppendCNAMERecords(ctx context.Context, msg *dns.Msg
 	}
 
 	if record != nil {
-		return plug.HandleRecord(ctx, msg, rname, dns.TypeA, record)
+		return plug.HandleRecord(ctx, msg, rname, qtype, record)
 	}
 
 	logging.Log.Debugf("No record found for alias '%s' and type '%s'", alias, dns.TypeToString[qtype])
@@ -67,6 +67,8 @@ func (plug *ConsulKVPlugin) AppendCNAMERecords(ctx context.Context, msg *dns.Msg
 func (plug *ConsulKVPlugin) HandleExternalCNAME(ctx context.Context, msg *dns.Msg, alias string, qtype uint16) bool {
 	logging.Log.Debugf("Resolving external CNAME target: %s", alias)
 
+	before := len(msg.Answer)
+
 	request := request.Request{W: &ResponseWriterWrapper{WrappedMsg: msg}, Req: new(dns.Msg)}
 	request.Req.SetQuestion(dns.Fqdn(alias), qtype)
 
@@ -76,5 +78,5 @@ func (plug *ConsulKVPlugin) HandleExternalCNAME(ctx context.Context, msg *dns.Ms
 		return false
 	}
 
-	return len(msg.Answer) > len(msg.Answer)-1
+	return len(msg.Answer) > before
 }

@@ -60,14 +60,14 @@ func GetZoneAndRecord(zones []string, qname string) (string, string) {
 	qname = strings.TrimSuffix(dns.Fqdn(qname), ".")
 
 	for _, zone := range zones {
-		if strings.HasSuffix(qname, zone) {
-			record := strings.TrimSuffix(qname, zone)
-			record = strings.TrimSuffix(record, ".")
+		z := strings.TrimSuffix(zone, ".")
 
-			if record == "" {
-				record = "@"
-			}
+		if qname == z {
+			return zone, "@"
+		}
 
+		if strings.HasSuffix(qname, "."+z) {
+			record := strings.TrimSuffix(qname, "."+z)
 			return zone, record
 		}
 	}

@@ -154,6 +154,8 @@ func (consul *ConsulConfig) GetConfigFromConsul() (*ConsulKVConfig, error) {
 		return nil, err
 	}
 
+	config.ApplyDefaults()
+
 	IncrementMetricsConsulRequestDurationSeconds("NOERROR", duration)
 	return &config, nil
 }
@@ -185,13 +187,15 @@ func (consul ConsulConfig) GetZoneRecordFromConsul(zone, name string, cache *Con
 
 func (consul ConsulConfig) GetSOARecordFromConsul(zone string, cache *ConsulKVCache) (*records.SOARecord, error) {
 	record, err := consul.GetZoneRecordFromConsul(zone, "@", cache)
+	if err != nil {
+		return nil, err
+	}
 
 	if record != nil {
 		for _, rec := range record.Records {
 			if rec.Type == "SOA" {
 				var soa records.SOARecord
-				err = json.Unmarshal(rec.Value, &soa)
-				if err != nil {
+				if err := json.Unmarshal(rec.Value, &soa); err != nil {
 					return nil, err
 				}
 
@@ -200,7 +204,7 @@ func (consul ConsulConfig) GetSOARecordFromConsul(zone string, cache *ConsulKVCa
 		}
 	}
 
-	return GetDefaultSOA(zone), err
+	return GetDefaultSOA(zone), nil
 }
 
 func CreateQueryOptions(cache *ConsulKVCache) *api.QueryOptions {

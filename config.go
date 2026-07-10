@@ -31,6 +31,15 @@ func (plug *ConsulKVPlugin) SetConfig(config *ConsulKVConfig) {
 	plug.config.Store(config)
 }
 
+// ApplyDefaults fills in values the operator may omit. Flattening defaults to
+// "local" (the documented default); its zero value "" would otherwise fall
+// through the disable-flattening guard and behave like "local" only by accident.
+func (config *ConsulKVConfig) ApplyDefaults() {
+	if config.Flattening == "" {
+		config.Flattening = types.Flattening_Local
+	}
+}
+
 type ConsulKVConfig struct {
 	ZonePrefix  string               `json:"zone_prefix"`
 	Zones       []string             `json:"zones"`

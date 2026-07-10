@@ -64,6 +64,7 @@ func (consul ConsulConfig) WatchConsulConfig(onUpdate func(*ConsulKVConfig)) err
 			return err
 		}
 
+		config.ApplyDefaults()
 		onUpdate(config)
 
 		logging.Log.Infof("Updated Consul Config from '%s/config'", consul.KVPrefix)
