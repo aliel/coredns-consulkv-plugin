@@ -24,3 +24,8 @@ go.work.sum
 
 # env file
 .env
+
+# Nix / local Go toolchain state
+result
+.gopath/
+.gocache/
